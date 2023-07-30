@@ -1,2 +1,2 @@
 # CRefNet
-Official release of CRefNet.
+Official release of CRefNet. Coming soon ...
