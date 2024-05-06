@@ -31,6 +31,7 @@ from torchvision.transforms import RandomResizedCrop
 from torchvision.transforms import functional as F
 from kornia.geometry import resize
 
+from utils import image_util
 from utils.image_util import get_scale_alpha, read_image
 import constants as C
 
@@ -52,6 +53,7 @@ class MITIntrinsicDataset(data.Dataset):
         "test": ['cup2', 'deer', 'frog2', 'paper2', 'pear',
                  'potato', 'raccoon', 'sun', 'teabag1', 'turtle']
     }
+    GAMMA = 1.0/2.2
 
     def __init__(self, root: str,
                  mode: str,
@@ -108,12 +110,12 @@ class MITIntrinsicDataset(data.Dataset):
         obj_path, filename = os.path.split(path)
         _, obj = os.path.split(obj_path)
 
-        srgb_img_path = path
+        rgb_img_path = path
         gt_R_path = os.path.join(obj_path, "reflectance.png")
         mask_path = os.path.join(obj_path, "mask.png")
 
         # Notice: MIT Intrinsic dataset is 16-bit png
-        srgb_img = read_image(srgb_img_path, "tensor")
+        rgb_img = read_image(rgb_img_path, "tensor")
         gt_R = read_image(gt_R_path, "tensor")
         mask = read_image(mask_path, "tensor")[None, :, :].repeat(3, 1, 1)
         mask = (mask > 0.5).to(torch.float32)
@@ -121,7 +123,7 @@ class MITIntrinsicDataset(data.Dataset):
             gt_S_path = os.path.join(obj_path, "shading.png")
             gt_S = read_image(gt_S_path, "tensor")[None, :, :].repeat(3, 1, 1)
         else:
-            gt_S = srgb_img / gt_R.clamp(min=1e-6) * mask
+            gt_S = rgb_img / gt_R.clamp(min=1e-6) * mask
             gt_S = gt_S.mean(dim=0, keepdim=True).repeat(3, 1, 1)
         # print(f"srgb_img: {srgb_img.max()}")
         # print(f"gt_R: {gt_R.max()}")
@@ -131,16 +133,16 @@ class MITIntrinsicDataset(data.Dataset):
         # data augmentation
         if augment_data:
             # color jitter and scale
-            gt_R = torchvision.transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.5)(gt_R) * mask
-            alpha = get_scale_alpha(gt_R, src_percentile=0.9999, dst_value=0.90).clamp(min=0.001, max=255).item()
+            gt_R = torchvision.transforms.ColorJitter(brightness=0.0, contrast=0.0, saturation=0.0, hue=0.5)(gt_R) * mask
+            alpha = get_scale_alpha(gt_R, mask, src_percentile=0.9999, dst_value=0.90).clamp(min=0.001, max=255).item()
             gt_R = (gt_R * alpha).clamp(min=0.0, max=1.0)
             gt_S = gt_S / alpha
-            # reconstruct srgb image
-            srgb_img = gt_R * gt_S * mask
+            # reconstruct rgb image
+            rgb_img = gt_R * gt_S * mask
             # random resized crop
-            data_tuple = (srgb_img, gt_R, gt_S, mask)
+            data_tuple = (rgb_img, gt_R, gt_S, mask)
             if self.img_size is not None:
-                i, j, h, w = RandomResizedCrop.get_params(srgb_img, scale=[0.1, 1.0], ratio=[4. / 10., 10. / 4.])
+                i, j, h, w = RandomResizedCrop.get_params(rgb_img, scale=[0.1, 1.0], ratio=[4. / 10., 10. / 4.])
                 data_tuple = (F.crop(d, i, j, h, w) for d in data_tuple)
                 data_tuple = (resize(d, size=self.img_size, interpolation="bilinear", align_corners=False, antialias=True)
                               for d in data_tuple)
@@ -148,14 +150,17 @@ class MITIntrinsicDataset(data.Dataset):
                 data_tuple = (F.hflip(d) for d in data_tuple)
             if torch.rand(1) < 0.5:
                 data_tuple = (F.vflip(d) for d in data_tuple)
-            srgb_img, gt_R, gt_S, mask = data_tuple
+            rgb_img, gt_R, gt_S, mask = data_tuple
+            # mask = (mask > 0.99).to(torch.float32)
+            # gt_S *= image_util.get_scale_alpha(gt_S, mask, 0.9, 0.8)
+            # gt_S = gt_S.clamp(min=0.0, max=1.0)
 
         mask = (mask > 0.99).to(torch.float32)
         gt_R = gt_R * mask
-        gt_S = gt_S * mask
-        # Seems the MIT Intrinsic data does not consider if the image is in linear or sRGB space
-        # here, rgb_img = reconstruction
-        rgb_img = gt_R * gt_S * mask
+        # gt_S = gt_S * mask
+        gt_S[mask == 0] = 0.0
+        srgb_img = rgb_img
+        # srgb_img = image_util.rgb_to_srgb(rgb_img, self.GAMMA)
         return srgb_img, rgb_img, gt_R, gt_S, mask, f"{obj}_{filename[:-4]}"
 
     def __getitem__(self, index):

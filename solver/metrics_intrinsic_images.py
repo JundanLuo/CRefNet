@@ -80,7 +80,7 @@ def compute_DSSIM(pred, target, mask, mode, scale_invariant=True):
                      reduction="mean",
                      padding="valid")
 
-    if mode == "test":
+    if mode == "test" and scale_invariant:
         assert pred.size(0) == target.size(0) == mask.size(0) == 1, "Batch_size must be 1"
         for i in range(2, 11):
             for j in [-1, 1]:

@@ -1,0 +1,57 @@
+DIR: "./experiments/CRefNet-swin-v2/MPI"
+
+MODEL:
+  ARCH:
+    name: "crefnet"
+    r_chs: 3
+    s_chs: 3
+    num_swin_groups: 8
+    depth_per_swin_group: 4
+  color_rep: "rgI"
+  use_gpu: True
+  input_img_size: 224
+
+TRAIN:
+  use_checkpoint_tool: True
+  pretrained: None
+  save_per_epoch: 1
+  dataset: "MPI"
+  split: "scene_reverse"
+  batch_size_cgi: 8
+  workers_cgi: 8
+  num_epoch: 35
+  epoch_iters: 2000
+  disp_iters: 49
+  optim: "AdamW"
+  lr: 2e-4
+  weight_decay: 1e-4
+  LR_SCHEDULER:
+    name: "Linear"
+    decay_epoch: 25
+    decay_rate: 0.01
+    warmup_epoch: 1
+    warmup_init_lr: 1e-6
+  visualize: True
+  STRATEGY:
+    type: "with_SR"
+    cosine_cycle: 20
+    rm_cgi_epoch: 20
+  CRITERIA:
+    update_gt: False
+    DENSE:
+      type: "absolute"
+      suppress_c: 5e-4
+      suppress_i: 1e-2
+      w_dense_value: 1.0
+      w_dense_grad: 10.0
+      w_dense_dssim: 20.0
+
+VAL:
+  visualize: True
+
+TEST:
+  visualize: True
+  dataset: "MPI"
+  split: "scene_reverse"
+
+VERSION: "v0.0"

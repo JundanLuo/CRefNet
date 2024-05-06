@@ -1,22 +1,3 @@
-# ////////////////////////////////////////////////////////////////////////////
-# // This file is part of CRefNet. For more information
-# // see <https://github.com/JundanLuo/CRefNet>.
-# // If you use this code, please cite our paper as
-# // listed on the above website.
-# //
-# // Licensed under the Apache License, Version 2.0 (the “License”);
-# // you may not use this file except in compliance with the License.
-# // You may obtain a copy of the License at
-# //
-# //     http://www.apache.org/licenses/LICENSE-2.0
-# //
-# // Unless required by applicable law or agreed to in writing, software
-# // distributed under the License is distributed on an “AS IS” BASIS,
-# // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# // See the License for the specific language governing permissions and
-# // limitations under the License.
-# ////////////////////////////////////////////////////////////////////////////
-
 import os
 import os.path
 import time
@@ -33,7 +14,7 @@ from skimage.restoration import denoise_tv_chambolle
 # from PIL import Image
 from kornia.geometry import resize
 
-from utils.image_util import adjust_image_for_display
+from utils import image_util
 import constants as C
 
 
@@ -50,12 +31,14 @@ class CGIntrinsicsDataset(data.Dataset):
 
     def __init__(self, root: str,
                  mode: str,
-                 img_size: tuple or None) -> None:
+                 img_size: tuple or None,
+                 require_linear_input=False) -> None:
         assert mode in ["train", "full"] or img_size is None, f"Not resize image for test."
 
         self.mode = mode
         self.is_train = (self.mode in ["train", "full"])
         self.img_size = img_size
+        self.require_linear_input = require_linear_input
 
         # check dataset path
         self.root = root
@@ -129,7 +112,7 @@ class CGIntrinsicsDataset(data.Dataset):
 
         # to Tensor
         srgb_img, gt_R, mask = self.numpy_images_2_tensor(srgb_img, gt_R, mask)
-        gt_R = adjust_image_for_display(gt_R, True, False, 0.9999, 0.95, True)
+        gt_R = image_util.adjust_image_for_display(gt_R, True, False, 0.9999, 0.95, True)
         rgb_img = srgb_img ** 2.2
         # gt_S
         gt_S = rgb_img / gt_R.clamp(min=1e-5) * mask
@@ -158,8 +141,16 @@ class CGIntrinsicsDataset(data.Dataset):
 
         mask = (mask > 0.99).to(torch.float32)
         gt_R = gt_R * mask
-        gt_S[mask == 0] = 0.5
-
+        if self.require_linear_input:
+            gt_S[mask == 0] = 0.0
+            mask_saturated = (srgb_img.max(dim=0, keepdim=True)[0] > 0.99).to(torch.float32)
+            mask *= (1.0 - mask_saturated)
+            # gt_S *= image_util.get_scale_alpha(gt_S, mask, 0.9, 0.8)
+            # gt_S = gt_S.clamp(min=0.0, max=1.0)
+            srgb_img = rgb_img
+        else:
+            gt_S[mask == 0] = 0.5
+        gt_S = gt_S.mean(dim=0, keepdim=True).repeat(3, 1, 1)  # gray shading
         return srgb_img, rgb_img, gt_R, gt_S, mask, f"{img_dir}_{filename[:-len_postfix]}"
 
     def numpy_images_2_tensor(self, *imgs):

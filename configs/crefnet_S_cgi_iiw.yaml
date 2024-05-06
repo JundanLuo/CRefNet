@@ -1,0 +1,58 @@
+DIR: "./experiments/CRefNet-swin-v2/Shading"
+
+DATASET:
+  IIW_pred_by_NIID_Net: "./data/CGIntrinsics/IIW/NIID-Net_pred_IIW"
+
+MODEL:
+  ARCH:
+    name: "crefnet"
+    r_chs: 3
+    s_chs: 1
+    num_swin_groups: 8
+    depth_per_swin_group: 4
+  color_rep: "rgI"
+  use_gpu: True
+  input_img_size: 224
+
+TRAIN:
+  use_checkpoint_tool: True
+  pretrained: None
+  save_per_epoch: 0
+  dataset: "IIW"
+  split: "train"
+  batch_size_cgi: 8
+  workers_cgi: 8
+  num_epoch: 30
+  epoch_iters: 2000
+  disp_iters: 49
+  optim: "AdamW"
+  lr: 2e-4
+  weight_decay: 1e-4
+  LR_SCHEDULER:
+    name: "Linear"
+    decay_epoch: 20
+    decay_rate: 0.01
+    warmup_epoch: 1
+    warmup_init_lr: 1e-6
+  visualize: True
+  STRATEGY:
+    type: "with_SR"
+    cosine_cycle: 15
+  CRITERIA:
+    update_gt: False
+    DENSE:
+      type: "absolute"
+      suppress_c: 5e-4
+      suppress_i: 1e-2
+      w_dense_value: 1.0
+      w_dense_grad: 40.0
+      w_dense_dssim: 0.0
+
+VAL:
+  visualize: True
+
+TEST:
+  dataset: "SAW"
+  visualize: True
+
+VERSION: "v0.0"

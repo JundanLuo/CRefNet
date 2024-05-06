@@ -45,7 +45,7 @@ class ImageFolderLoader(Dataset):
         self.dataset_name = self.data_dir
         self.mode = mode
         img_filter = {
-            None: filter_img_files,
+            "none": filter_img_files,
             "with_mask": filter_img_files_exclude_mask,
             "MIT_test": filter_mit_test_files,
         }[mode]
@@ -63,7 +63,9 @@ class ImageFolderLoader(Dataset):
         MAX_8bit = 255.0
         MAX_16bit = 65535.0
         # Read image
+        assert os.path.exists(path), f"Image {path} does not exist."
         img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        assert img is not None, f"Read image {path} failed."
         # Convert to float32 [0, 1]
         if img.dtype == np.uint16:  # Note that MIT images are 16 bits
             img = img.astype(np.float32) / MAX_16bit
@@ -100,12 +102,17 @@ class ImageFolderLoader(Dataset):
         filename_without_ext = os.path.splitext(filename_with_ext)[0]  # Get filename without extension
         # Read image
         input_img = self.read_image(img_path, "tensor")  # [C, H, W]
-        if self.mode in [None, "with_mask"]:
+        gt_R = gt_S = None
+        if self.mode in ["none", "with_mask"]:
             filename = filename_without_ext
-            if self.mode is None:
+            if self.mode in ["none"]:
                 mask = torch.ones_like(input_img)  # [C, H, W]
             elif self.mode == "with_mask":
                 mask_path = os.path.join(self.data_dir, filename + "_mask.png")
+                if not os.path.exists(mask_path):
+                    mask_path = os.path.join(self.data_dir, filename + "_mask.jpg")
+                    if not os.path.exists(mask_path):
+                        assert False, f"Mask {mask_path} does not exist."
                 mask = self.read_image(mask_path, "tensor")
                 mask = (mask > 0.5).to(torch.float32)  # [C, H, W]
         elif self.mode == "MIT_test":
@@ -113,10 +120,14 @@ class ImageFolderLoader(Dataset):
             mask_path = os.path.join(self.data_dir, filename + "-label-mask.png")
             mask = self.read_image(mask_path, "tensor")  # [C, H, W]
             mask = (mask > 0.5).to(torch.float32)  # [C, H, W]
+            # gt_R_path = os.path.join(self.data_dir, filename + "-label-albedo.png")
+            # gt_S_path = os.path.join(self.data_dir, filename + "-label-shading.png")
+            # gt_R = self.read_image(gt_R_path, "tensor")
+            # gt_S = self.read_image(gt_S_path, "tensor").repeat(3, 1, 1)
         else:
             raise NotImplementedError(f"Mode {self.mode} is not implemented.")
         mask = mask.expand_as(input_img)  # [C, H, W]
-        return {
+        data_dict = {
             "img_path": img_path,
             "img_name": filename,
             "srgb_img": input_img,
@@ -124,3 +135,8 @@ class ImageFolderLoader(Dataset):
             "index": idx,
             "dataset": self.dataset_name,
         }
+        if gt_R is not None:
+            data_dict["gt_R"] = gt_R
+        if gt_S is not None:
+            data_dict["gt_S"] = gt_S
+        return data_dict

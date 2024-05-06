@@ -1,0 +1,12 @@
+conda create --yes -n crefnet python=3.6
+conda activate crefnet
+conda install --yes pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch-lts -c nvidia  # pytorch 1.8.2
+pip install -U openmim==0.3.3
+mim install mmcv-full==1.7.0
+pip install mmsegmentation==0.29.1
+pip install -r requirements.txt
+#conda install scipy h5py scikit-image
+#conda install matplotlib tensorboard Pillow pandas
+##pip install opencv-python==4.6.0.66
+#conda install -c conda-forge timm yacs
+#pip install kornia ptflops

@@ -30,8 +30,6 @@ import torch.nn.functional as F
 
 from solver.metrics_intrinsic_images import compute_DSSIM
 
-
-# import utils.visualize as V
 from utils import image_util
 
 
@@ -228,19 +226,248 @@ class PixelWiseLoss(nn.Module):
         return loss.mean()
 
 
-class IIWCriterion_rgI(nn.Module):
+def DenseIntrinsicCriterion(color_rep, key, suppress_c, suppress_i,
+                            w_c=1.0, w_i=1.0,
+                            w_value=1.0, w_grad=40.0, w_dssim=0.0):
+    if color_rep == "rgI":
+        return DenseIntrinsicCriterion_rgI(key, suppress_c, suppress_i,
+                                           w_c, w_i, w_value, w_grad, w_dssim)
+    elif color_rep == "RGB":
+        return DenseIntrinsicCriterion_RGB(key, suppress_i,
+                                           w_value, w_grad, w_dssim)
+    else:
+        raise Exception("Unknown color representation: {}".format(color_rep))
+
+
+class DenseIntrinsicCriterion_rgI(nn.Module):
+    Criteria = namedtuple("Criteria", ["rg", "w_rg", "I", "w_I", "w"])
+    key = None  # should be "R" or "S"
+    w_value = 1.0
+    w_grad = 40.0
+    w_dssim = 0.0
+    w_c = 1.0
+    w_i = 1.0
+
+    def __init__(self, key, suppress_c, suppress_i,
+                 w_c=1.0, w_i=1.0,
+                 w_value=1.0, w_grad=40.0, w_dssim=0.0):
+        '''
+            :param suppress_c: suppression threshold for the chromaticity
+            :param suppress_i: suppression threshold for the intensity
+        '''
+        super(DenseIntrinsicCriterion_rgI, self).__init__()
+        self.key = key
+        self.w_value, self.w_grad, self.w_dssim = w_value, w_grad, w_dssim
+        self.w_c, self.w_i = w_c, w_i
+        # p = 1.0 if self.scale_invrc_mode == "direct_intrinsics" else 0
+        p = 0
+        self.value_criterion = self.Criteria(
+            PixelWiseLoss(0), self.w_c,
+            PixelWiseLoss(p), self.w_i,
+            self.w_value
+        )
+        self.grad_criterion = self.Criteria(
+            MultiScaleGradientLoss(order=1, stride=2, step=4, mode="L1", eq_threshold=suppress_c), self.w_c,
+            MultiScaleGradientLoss(order=1, stride=2, step=4, mode="L1", eq_threshold=suppress_i), self.w_i,
+            self.w_grad
+        )
+        print(f"Build DenseIntrinsicCriterion_rgI:\n"
+              f"\tsuppression=({suppress_c}, {suppress_i}), \n"
+              f"\tweights rg, I: ({self.w_c}, {self.w_i}), \n"
+              f"\tweights: ({self.w_value}, {self.w_grad}, {self.w_dssim})")
+
+    def generate_compared_pair(self, color_rep, pred, gt_RGB, mask):
+        # prediction
+        pred_rgI = pred[f"direct_linear_out_{self.key}"]
+        # compared_pred_R_log = pred[f"direct_log_out_{self.key}"]
+
+        # ground truth
+        assert gt_RGB.shape[2:] == mask.shape[2:] == pred_rgI.shape[2:]
+        # gt_RGB = F.interpolate(gt_RGB, size=pred_rgI.shape[2:], mode='area')
+        # mask = F.interpolate(mask, size=pred_rgI.shape[2:], mode='area')
+        mask = (mask > 0.99).to(torch.float32)
+        if color_rep == "I":
+            assert False
+            # compared_gt_R_linear = gt_R.mean(dim=1, keepdim=True)
+            # compared_gt_R_log = torch.log(compared_gt_R_linear.clamp(min=1e-6))
+        elif color_rep == "rgI":
+            I_linear = gt_RGB.mean(dim=1, keepdim=True)
+            # I_log = torch.log(I_linear.clamp(min=1e-6))
+            if pred_rgI.size(1) == 1:
+                gt_rgI = I_linear
+            else:
+                rg = image_util.rgb_to_chromaticity(gt_RGB)[:, :2, :, :]
+                gt_rgI = torch.cat((rg, I_linear), dim=1)
+            # compared_gt_R_log = torch.cat((rg, I_log), dim=1)
+        else:
+            assert False, f"Not supports color_rep: {color_rep}"
+        return pred_rgI, gt_rgI, gt_RGB, mask
+
+    def forward(self, pred, data):
+        assert pred["color_rep"] == "rgI"
+
+        # GPU
+        device = pred[f"pred_{self.key}"].device
+        total_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
+
+        # Ground truth
+        gt_RGB = data[f'gt_{self.key}'].to(torch.float32).requires_grad_(False)  # RGB space
+        mask = (torch.min(data['mask'], dim=1, keepdim=True)[0] >= 0.999).to(torch.float32).requires_grad_(False)
+        if self.key in ["S"]:
+            _gt_I = gt_RGB.mean(dim=1, keepdim=True)
+            mask *= (_gt_I > 1e-4) * (_gt_I < 2.0)  # ignore extreme GT shading
+
+        # Compared pair
+        color_rep = pred["color_rep"]
+        pred_rgI, gt_rgI, gt_RGB, mask = self.generate_compared_pair(color_rep, pred, gt_RGB, mask)
+        if pred_rgI.size(1) == 1:
+            pred_rg = gt_rg = None
+            pred_I, gt_I = pred_rgI, gt_rgI
+        elif pred_rgI.size(1) == 3:
+            pred_rg, pred_I = pred_rgI.split([2, 1], dim=1)
+            gt_rg, gt_I = gt_rgI.split([2, 1], dim=1)
+        else:
+            assert False
+
+        # Loss functions
+        mask_rg, mask_I, mask_rgI = mask.repeat(1, 2, 1, 1), mask.repeat(1, 1, 1, 1), \
+                                    mask.repeat(1, pred_rgI.size(1), 1, 1)
+        if pred_rgI.size(1) == 1:
+            if self.w_value > 1e-5:
+                value_loss = self.value_criterion.w * (
+                        self.value_criterion.I(pred_I, gt_I, mask_I) * self.value_criterion.w_I
+                )
+                total_loss += value_loss
+            if self.w_grad > 1e-5:
+                grad_loss = self.grad_criterion.w * (
+                        self.grad_criterion.I(pred_I, gt_I, mask_I) * self.grad_criterion.w_I
+                )
+                total_loss += grad_loss
+            if self.w_dssim > 1e-5:
+                dssim_loss = self.w_dssim * (
+                    compute_DSSIM(pred_I, gt_I, mask_I, "train", scale_invariant=False) * self.w_i
+                )
+                total_loss += dssim_loss
+        elif pred_rgI.size(1) == 3:
+            if self.w_value > 1e-5:
+                value_loss = self.value_criterion.w * (
+                        self.value_criterion.rg(pred_rg, gt_rg, mask_rg) * self.value_criterion.w_rg +
+                        self.value_criterion.I(pred_I, gt_I, mask_I) * self.value_criterion.w_I
+                )
+                total_loss += value_loss
+            if self.w_grad > 1e-5:
+                grad_loss = self.grad_criterion.w * (
+                        self.grad_criterion.rg(pred_rg, gt_rg, mask_rg) * self.grad_criterion.w_rg +
+                        self.grad_criterion.I(pred_I, gt_I, mask_I) * self.grad_criterion.w_I
+                )
+                total_loss += grad_loss
+            if self.w_dssim > 1e-5:
+                dssim_loss = self.w_dssim * (
+                    compute_DSSIM(pred_rg, gt_rg, mask_rg, "train", scale_invariant=False) * self.w_c +
+                    compute_DSSIM(pred_I, gt_I, mask_I, "train", scale_invariant=False) * self.w_i
+                )
+                total_loss += dssim_loss
+        else:
+            assert False
+        # total_loss += value_loss + grad_loss
+
+        return total_loss
+
+
+class DenseIntrinsicCriterion_RGB(nn.Module):
+    Criteria = namedtuple("Criteria", ["loss", "w"])
+    key = None  # should be "R" or "S"
+    w_value = 1.0
+    w_grad = 40.0
+    w_dssim = 0.0
+
+    def __init__(self, key, suppress_i,
+                 w_value=1.0, w_grad=40.0, w_dssim=0.0):
+        '''
+            :param suppress_i: suppression threshold for each channel
+        '''
+        super(DenseIntrinsicCriterion_RGB, self).__init__()
+        self.key = key
+        self.w_value, self.w_grad, self.w_dssim = w_value, w_grad, w_dssim
+        # p = 1.0 if self.scale_invrc_mode == "direct_intrinsics" else 0
+        p = 0
+        self.value_criterion = self.Criteria(
+            PixelWiseLoss(p),
+            self.w_value
+        )
+        self.grad_criterion = self.Criteria(
+            MultiScaleGradientLoss(order=1, stride=2, step=4, mode="L1", eq_threshold=suppress_i),
+            self.w_grad
+        )
+        print(f"Build DenseIntrinsicCriterion_RGB:\n"
+              f"\tsuppression=({suppress_i}), \n"
+              f"\tweights: ({self.w_value}, {self.w_grad}, {self.w_dssim})")
+
+    def generate_compared_pair(self, color_rep, pred, gt_RGB, mask):
+        assert color_rep == "RGB", f"color_rep should be RGB, but got {color_rep}"
+        # prediction
+        pred_RGB = pred[f"direct_linear_out_{self.key}"]
+        # ground truth
+        assert gt_RGB.shape[2:] == mask.shape[2:] == pred_RGB.shape[2:]
+        mask = (mask > 0.99).to(torch.float32)
+        mask = mask.min(dim=1, keepdim=True)[0]  # (B, 1, H, W)
+        mask = mask.repeat(1, pred_RGB.size(1), 1, 1)
+        if pred_RGB.size(1) == 1:
+            assert False, "not implemented"
+            gt_RGB = gt_RGB.mean(dim=1, keepdim=True)  # (B, 1, H, W)
+        return pred_RGB, gt_RGB, mask
+
+    def forward(self, pred, data):
+        assert pred["color_rep"] == "RGB", f"color_rep should be RGB, but got {pred['color_rep']}"
+
+        # GPU
+        device = pred[f"pred_{self.key}"].device
+        total_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
+
+        # Ground truth
+        gt_RGB = data[f'gt_{self.key}'].to(torch.float32).requires_grad_(False)  # RGB space
+        mask = (torch.min(data['mask'], dim=1, keepdim=True)[0] >= 0.999).to(torch.float32).requires_grad_(False)
+        if self.key in ["S"]:
+            _gt_I = gt_RGB.mean(dim=1, keepdim=True)
+            mask *= (_gt_I > 1e-4) * (_gt_I < 2.0)  # ignore extreme GT shading
+
+        # Compared pair
+        color_rep = pred["color_rep"]
+        pred_RGB, gt_RGB, mask = self.generate_compared_pair(color_rep, pred, gt_RGB, mask)
+        assert pred_RGB.shape[1] in [1, 3], f"pred_RGB should have 1 or 3 channels, but got {pred_RGB.shape[1]}"
+
+        # Loss functions
+        if self.w_value > 1e-5:
+            value_loss = self.value_criterion.w * (
+                    self.value_criterion.loss(pred_RGB, gt_RGB, mask)
+            )
+            total_loss += value_loss
+        if self.w_grad > 1e-5:
+            grad_loss = self.grad_criterion.w * (
+                    self.grad_criterion.loss(pred_RGB, gt_RGB, mask)
+            )
+            total_loss += grad_loss
+        if self.w_dssim > 1e-5:
+            dssim_loss = self.w_dssim * (
+                    compute_DSSIM(pred_RGB, gt_RGB, mask, "train", scale_invariant=False)
+            )
+            total_loss += dssim_loss
+        return total_loss
+
+
+class IIWCriterion(nn.Module):
     w: float
     w_ineq: float
     margin_eq: float
     margin_ineq: float
 
     def __init__(self, w, w_ineq, margin_eq, margin_ineq):
-        super(IIWCriterion_rgI, self).__init__()
+        super(IIWCriterion, self).__init__()
         self.w = w
         self.w_ineq = w_ineq
         self.margin_eq = margin_eq
         self.margin_ineq = margin_ineq
-        print(f"Build IIWCriterion_rgI with w={self.w}, w_ineq={self.w_ineq}, "
+        print(f"Build IIWCriterion with w={self.w}, w_ineq={self.w_ineq}, "
               f"margin_eq = {self.margin_eq}, margin_ineq= {self.margin_ineq}")
 
     def BatchRankingLoss(self, prediction_R, judgements_eq, judgements_ineq, random_flip):
@@ -322,21 +549,27 @@ class IIWCriterion_rgI(nn.Module):
         return avg_loss
 
     def forward(self, pred, data, **params):
-        assert pred["color_rep"] == "rgI"
-        pred_rgI = pred["direct_linear_out_R"]
+        color_rep = pred["color_rep"]
+        assert color_rep in ["rgI", "RGB"]
+        # pred_rgI = pred["direct_linear_out_R"]
 
         # GPU
         device = pred["pred_R"].device
         total_loss = torch.tensor(0.0, dtype=torch.float32, device=device)
         targets = data["targets"]
 
-        num_imgs = pred_rgI.size(0)
+        num_imgs = pred["pred_R"].size(0)
         for i in range(0, num_imgs):
             # o_h, o_w = targets["original_h"][i], targets["original_w"][i]
             judgements_eq = targets["eq_mat"][i].to(device).requires_grad_(False)
             judgements_ineq = targets["ineq_mat"][i].to(device).requires_grad_(False)
             random_flip = targets["random_flip"][i]
-            intensity = pred_rgI[i, 2:3, :, :]
+            if color_rep == "rgI":
+                intensity = pred["direct_linear_out_R"][i, 2:3, :, :]
+            elif color_rep == "RGB":
+                intensity = pred["direct_linear_out_R"][i, :, :, :].mean(dim=0, keepdim=True)
+            else:
+                raise NotImplementedError("Unknown color representation: {}".format(color_rep))
             total_loss += self.BatchRankingLoss(intensity, judgements_eq, judgements_ineq, random_flip)
         total_loss = total_loss/num_imgs
         return total_loss * self.w

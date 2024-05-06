@@ -1,0 +1,18 @@
+DIR: "./experiments/out/"
+
+MODEL:
+  ARCH:
+    name: "crefnet"
+    r_chs: 3
+    s_chs: 1
+    num_swin_groups: 8
+    depth_per_swin_group: 4
+  color_rep: "rgI"
+  use_gpu: True
+  input_img_size: 448
+
+TEST:
+  dataset: "IIW"
+  visualize: True
+
+VERSION: "v0.0"

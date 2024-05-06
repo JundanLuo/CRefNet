@@ -1,0 +1,60 @@
+DIR: "./experiments/CRefNet-swin-v2/"
+
+MODEL:
+  ARCH:
+    name: "crefnet"
+    r_chs: 3
+    s_chs: -1
+    num_swin_groups: 8
+    depth_per_swin_group: 4
+  color_rep: "rgI"
+  use_gpu: True
+  input_img_size: 224
+
+TRAIN:
+  use_checkpoint_tool: True
+  pretrained: None
+  save_per_epoch: 0
+  dataset: "IIW"
+  split: "train"
+  batch_size_cgi: 8
+  workers_cgi: 8
+  num_epoch: 20
+  epoch_iters: 2000
+  disp_iters: 49
+  optim: "AdamW"
+  lr: 1e-4
+  weight_decay: 1e-4
+  LR_SCHEDULER:
+    name: "Linear"
+    decay_epoch: 15
+    decay_rate: 0.01
+    warmup_epoch: 1
+    warmup_init_lr: 1e-6
+  visualize: True
+  STRATEGY:
+    type: "with_RR"
+    cosine_cycle: 5
+  CRITERIA:
+    update_gt: False
+    DENSE:
+      type: "absolute"
+      suppress_c: 1e-3
+      suppress_i: 4e-2
+      w_dense_value: 1.0
+      w_dense_grad: 40.0
+      w_dense_dssim: 0.0
+    ORDINAL:
+      w_iiw: 40.0
+      w_ineq: 1.0
+      margin_eq: 4e-2
+      margin_ineq: 0.2
+
+
+VAL:
+  visualize: True
+
+TEST:
+  visualize: True
+
+VERSION: "v0.0"

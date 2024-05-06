@@ -1,0 +1,1 @@
+Codes in this folder were copied from: https://github.com/CompVis/taming-transformers/tree/master/taming

@@ -31,8 +31,26 @@ import matplotlib.pyplot as plt
 import cv2
 
 
+# def rgb_to_srgb(rgb):
+#     ret = torch.zeros_like(rgb)
+#     idx0 = rgb <= 0.0031308
+#     idx1 = rgb > 0.0031308
+#     ret[idx0] = rgb[idx0] * 12.92
+#     ret[idx1] = torch.pow(1.055 * rgb[idx1], 1.0 / 2.4) - 0.055
+#     return ret
+
+
 def rgb_to_srgb(rgb, gamma=1.0/2.2):
     return rgb.clip(min=0.0) ** gamma
+
+
+# def srgb_to_rgb(srgb):
+#     ret = torch.zeros_like(srgb)
+#     idx0 = srgb <= 0.04045
+#     idx1 = srgb > 0.04045
+#     ret[idx0] = srgb[idx0] / 12.92
+#     ret[idx1] = torch.pow((srgb[idx1] + 0.055) / 1.055, 2.4)
+#     return ret
 
 
 def srgb_to_rgb(srgb, gamma=1.0/2.2):
@@ -84,22 +102,30 @@ def save_srgb_image(image, path, filename):
     image_pil.save(os.path.join(path,filename))
 
 
-def tone_mapping(image, rescale=True, trans2srgb=False):
+def tone_mapping(image, mask, rescale=True, trans2srgb=False, clip=True, gamma=1.0/2.2,
+                 src_PERCENTILE=0.9,
+                 dst_VALUE=0.8,
+                 w_RGB=(0.3, 0.59, 0.11)):
+    assert image.ndim == mask.ndim == 3, "Only supports image: [C, H, W]"
     # MAX_SRGB = 1.077837  # SRGB 1.0 = RGB 1.077837
-    src_PERCENTILE = 0.9
-    dst_VALUE = 0.8
+    if mask.sum() < 1.0:
+        return image.detach(), 1.0
 
     vis = image.detach()
+    vis = vis.clamp(min=0.0)
     if vis.size(0) == 1:
         vis = vis.repeat(3, 1, 1)
+    mask = mask.min(dim=0, keepdim=True)[0]  # 1HW
 
     if rescale:
-        brightness = 0.3 * vis[0, :, :] + 0.59 * vis[1, :, :] + 0.11 * vis[2, :, :]
+        brightness = w_RGB[0] * vis[0, :, :] + w_RGB[1] * vis[1, :, :] + w_RGB[2] * vis[2, :, :]  # HW
+        # brightness = 0.3 * vis[0, :, :] + 0.59 * vis[1, :, :] + 0.11 * vis[2, :, :]  # HW
+        brightness = brightness[mask[0] > 0.999]  # Apply the mask to the brightness tensor
         src_value = brightness.quantile(src_PERCENTILE)
         if src_value < 1.0e-4:
             scalar = 0.0
         else:
-            scalar = math.exp(math.log(dst_VALUE) * 2.2 - math.log(src_value))
+            scalar = math.exp(math.log(dst_VALUE) * (1.0/gamma) - math.log(src_value))
         vis = scalar * vis
         # s = np.percentile(vis.cpu(), 99.9)
         # # if mask is None:
@@ -108,18 +134,20 @@ def tone_mapping(image, rescale=True, trans2srgb=False):
         # #     s = np.percentile(vis[mask > 0.5].numpy(), 99.9)
         # if s > MAX_SRGB:
         #     vis = vis / s * MAX_SRGB
+    else:
+        scalar = 1.0
 
     vis = torch.clamp(vis, min=0)
     if trans2srgb:
         # vis[vis > MAX_SRGB] = MAX_SRGB
-        vis = rgb_to_srgb(vis)
-
-    vis = vis.clamp(min=0.0, max=1.0)
-    return vis
+        vis = rgb_to_srgb(vis, gamma=gamma)
+    if clip:
+        vis = vis.clamp(min=0.0, max=1.0)
+    return vis, scalar
 
 
 def adjust_image_for_display(image: torch.tensor, rescale: bool, trans2srgb: bool, src_percentile=0.9999, dst_value=0.85,
-                             clip: bool = True):
+                             clip: bool = True, gamma=1.0/2.2):
     assert image.ndim == 3 or image.ndim == 4, "Only supports image: [C, H, W] or [B, C, H, W]"
     vis = image.detach()
     if vis.ndim == 3:
@@ -133,24 +161,24 @@ def adjust_image_for_display(image: torch.tensor, rescale: bool, trans2srgb: boo
         src_value[src_value < 1e-5] = 1.0
         vis = vis / src_value.view(src_value.size(0), 1, 1, 1) * dst_value
     if trans2srgb:
-        vis = rgb_to_srgb(vis)
+        vis = rgb_to_srgb(vis, gamma=gamma)
 
     if image.ndim == 3:
         vis = vis.squeeze(0)
     return vis.clamp(min=0.0, max=1.0) if clip else vis
 
 
-def get_scale_alpha(image: torch.tensor, src_percentile: float, dst_value: float):
-    assert image.ndim == 3 or image.ndim == 4, "Only supports image: [C, H, W] or [B, C, H, W]"
+def get_scale_alpha(image: torch.tensor, mask: torch.tensor, src_percentile: float, dst_value: float):
+    assert image.ndim == mask.ndim == 3, "Only supports image: [C, H, W]"
+    if mask.sum() < 1.0:
+        return torch.tensor([1.0]).to(image.device, torch.float32)
     vis = image.detach()
-    if vis.ndim == 3:
-        vis = vis.unsqueeze(0)  # [C, H, W] -> [1, C, H, W]
-    src_value = vis.mean(dim=1, keepdim=True)
-    src_value = src_value.view(src_value.size(0), -1).quantile(src_percentile, dim=1)
-    src_value[src_value < 1e-5] = 1.0
-    alpha = 1.0 / src_value.view(src_value.size(0), 1, 1, 1).clamp(min=1e-5) * dst_value
-    if image.ndim == 3:
-        alpha = alpha.squeeze(0)
+    src_value = vis.mean(dim=0)  # HW
+    mask = mask.min(dim=0)[0]  # HW
+    src_value = src_value[mask > 0.999].quantile(src_percentile)
+    alpha = 1.0 / src_value.clamp(min=1e-5) * dst_value
+    # check NaN
+    assert not torch.isnan(alpha), "NaN in alpha"
     return alpha
 
 
