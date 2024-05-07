@@ -60,7 +60,7 @@ MIT-intrinsic's split is coded in ```dataset/mit_intrinsic_dataset.py```.
 
 Train
 -
-Coming soon.
+[Navigate to the Training Doc](docs/README.md)
 
 
 Trained Models
