@@ -176,7 +176,7 @@ def validate_iiw(model, device, cfg: CN, mode: str,
                 if i % math.ceil(vis_per_images // batch_size_iiw) == 0:
                     idx = 0
                     img_name = data_iiw['img_name'][idx]
-                    vis_R = image_util.adjust_image_for_display(pred_R[idx], rescale=False, trans2srgb=False)
+                    vis_R = image_util.adjust_image_for_display(pred_R[idx], rescale=True, trans2srgb=False)
                     vis_S = image_util.adjust_image_for_display(pred_S[idx], rescale=True, trans2srgb=False,
                                                                 src_percentile=0.95, dst_value=0.8)
                     # vis_direct_linear_out_R = image_util.adjust_image_for_display(direct_linear_out_R[idx],
@@ -197,7 +197,7 @@ def validate_iiw(model, device, cfg: CN, mode: str,
             if writer is not None:
                 if i % math.ceil(600 // batch_size_iiw) == 0:
                     idx = 0
-                    vis_R = image_util.adjust_image_for_display(pred_R[idx], rescale=False, trans2srgb=False)
+                    vis_R = image_util.adjust_image_for_display(pred_R[idx], rescale=True, trans2srgb=False)
                     vis_grid = torch.cat((input_srgb[idx].to(vis_R.device), vis_R), 2)
                     writer.add_image(f"IIW/{label}", vis_grid, global_step=writing_index, dataformats="CHW")
                     writing_index += 1
@@ -283,7 +283,7 @@ def validate_saw(model, device, cfg: CN, mode: str,
         for sample in sample_arr:
             img_name, pred_R, pred_S, input_srgb = sample["img_name"], sample["pred_R"][0], sample["pred_S"][0], \
                                                    sample["input_srgb"][0]
-            vis_R = image_util.adjust_image_for_display(pred_R, rescale=False, trans2srgb=False)
+            vis_R = image_util.adjust_image_for_display(pred_R, rescale=True, trans2srgb=False)
             vis_S = image_util.adjust_image_for_display(pred_S, rescale=True, trans2srgb=False,
                                                         src_percentile=0.95, dst_value=0.8)
             input_srgb = input_srgb.to(vis_R.device)

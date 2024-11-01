@@ -71,23 +71,20 @@ class CGIntrinsicsDataset(data.Dataset):
         return len(self.data_list)
 
     def _get_data_list(self, path):
-        flag = self._check_exists([
+        flag, not_exist_list = self._check_exists([
             self.root,
             self.images_dir,
             path
         ])
-        if not flag:
-            raise RuntimeError(f"CGIntrinsics dataset is not found or not complete "
-                               f"in the path: {self.root}")
+        assert flag, (f"CGIntrinsics dataset is not found or not complete in the path: {self.root}, "
+                      f"not_exist_list: {not_exist_list}")
         # load csv list
         data_list = pd.read_csv(path, header=None)
         return data_list
 
-    def _check_exists(self, paths) -> bool:
-        flag = True
-        for p in paths:
-            flag = flag and os.path.exists(p)
-        return flag
+    def _check_exists(self, paths) -> (bool, list):
+        not_exist_list = [p for p in paths if not os.path.exists(p)]
+        return len(not_exist_list) == 0, not_exist_list
 
     def load_images(self, path: str, augment_data: bool):
 

@@ -8,7 +8,8 @@
 
 Updates
 -
-+ 05/May/2024: Release the trained models and the evaluation code.
++ 01/Nov/2024: Released the training code.
++ 05/May/2024: Released the trained models and the evaluation code.
 
 
 Dependencies
@@ -201,19 +202,12 @@ Use the MATLAB script ```compute_MIT_error.m``` and modify the corresponding gro
       ```
       </details>    
   + ```TEST.dense_task```: ```"R"```(reflectance) or ```"S"```(shading)
-+ Average the printed results of the two folds. 
-+ Contact Jundan Luo (<jundanluo22@gmail.com>) if you need the precomputed results on the MPI-Sintel benchmark.
++ Average the printed results of the two folds.
 
 
 ### Model complexity
-Coming soon.
-
-[//]: # (++++++++++++++++++++ model complexity should use the training script)
-
-[//]: # (+ Assess the model complexity of CRefNet: ```python model_complexity.py --cfg="configs/crefnet.yaml"```)
-
-[//]: # (  + CRefNet-E: ```python model_complexity.py --cfg="configs/crefnet-e.yaml"```)
-
++ Assess the model complexity of CRefNet: ```python model_complexity.py --cfg="configs/crefnet.yaml"```
+  + CRefNet-E: ```python model_complexity.py --cfg="configs/crefnet-e.yaml"```
 
 
 Infer
@@ -229,7 +223,7 @@ Infer
         MODEL.checkpoint "./trained_models/final_real.pt"
     ```
 + ```dataset/imagefolder_dataset.py``` is the dataset class used for loading images in a directory.
-+ Other possibly useful arguments:
++ Other possibly useful options:
   + ```--gamma_correct_input```: convert the input images in linear space into sRGB space.
   + ```--gamma_correct_output```: convert the output images in linear space into sRGB space.
   + ```--max_input_dim```: set the maximum dimension of the input images. 
@@ -252,6 +246,9 @@ Acknowledgements
     This code is originally provided by [IIW](http://opensurfaces.cs.cornell.edu/intrinsic/#).
     + Codes for evaluation on the SAW benchmark in ```solver/metrics_saw.py``` and ```solver/saw_utils.py```.
     These codes are originally provided by [SAW](http://opensurfaces.cs.cornell.edu/saw/).
+- We thank P. Das ([PIE-Net](https://github.com/Morpheus3000/PIE-Net?tab=readme-ov-file)) 
+and Z. Wang ([Single Image Intrinsic Decomposition with Discriminative Feature Encoding](https://github.com/screnary/SingleImageIntrinsic))
+for their assistance in evaluation and comparison.
     
 
 Citation
