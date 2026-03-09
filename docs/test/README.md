@@ -2,6 +2,10 @@ Evaluation
 - 
 Download the trained models into the ```<project_root>/trained_models/``` folder.
 
+### ARAP benchmark
++ Precomputed results on the ARAP benchmark by the main model ```final_real.pt```: [Google Drive](https://drive.google.com/file/d/1BAISXLsGG_bE63qLSKolvQvPbX7M-ECH/view?usp=drive_link)
++ Evaluation code: [intrinsic-image-eval repository](https://github.com/JundanLuo/intrinsic-image-eval)
+
 ### IIW benchmark
 We report the WHDR score in the sRGB space in the paper.
 + Evaluate the main model ```final_real.pt```:
